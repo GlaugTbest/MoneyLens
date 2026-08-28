@@ -1,0 +1,224 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+  items         Item[]
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([userId])
+}
+
+enum ItemStatus {
+  UPDATING
+  UPDATED
+  LOGIN_ERROR
+  OUTDATED
+  WAITING_USER_INPUT
+  DELETED
+}
+
+enum AccountType {
+  BANK
+  CREDIT
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
+enum CategorizationSource {
+  RULE
+  LLM
+  MANUAL
+  PLUGGY
+}
+
+// Um Item = uma conexão/login em uma instituição (modelo do Pluggy). O id
+// reaproveita o itemId do Pluggy diretamente para upserts idempotentes.
+model Item {
+  id                  String     @id
+  userId              String
+  user                User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectorId         Int
+  connectorName       String
+  connectorImageUrl   String?
+  status              ItemStatus
+  executionStatus     String?
+  lastSyncedAt        DateTime?
+  lastUpdatedAtPluggy DateTime?
+  webhookUrl          String?
+  error               Json?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  accounts      Account[]
+  webhookEvents WebhookEvent[]
+  syncLogs      SyncLog[]
+
+  @@index([userId])
+}
+
+model Account {
+  id           String      @id
+  itemId       String
+  item         Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  type         AccountType
+  subtype      String?
+  name         String
+  number       String?
+  balance      Decimal     @db.Decimal(18, 2)
+  currencyCode String      @default("BRL")
+  raw          Json
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  transactions Transaction[]
+
+  @@index([itemId])
+}
+
+model Category {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  slug     String  @unique
+  parentId String?
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  icon     String?
+  isSystem Boolean    @default(true)
+
+  transactions     Transaction[]
+  rules            CategorizationRule[]
+  recurringGroups  RecurringExpenseGroup[]
+}
+
+model Transaction {
+  id                       String                @id
+  accountId                String
+  account                  Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  description              String
+  descriptionRaw           String?
+  merchantName             String?
+  normalizedMerchant       String?
+  amount                   Decimal               @db.Decimal(18, 2)
+  type                     TransactionType
+  date                     DateTime
+  currencyCode             String                @default("BRL")
+  pluggyCategoryId         String?
+  pluggyCategory           String?
+  categoryId               String?
+  category                 Category?             @relation(fields: [categoryId], references: [id])
+  categorizationSource     CategorizationSource?
+  categorizationConfidence Float?
+  mcc                      Int?
+  raw                      Json
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  deletedAt                DateTime?
+
+  recurringGroupId String?
+  recurringGroup   RecurringExpenseGroup? @relation(fields: [recurringGroupId], references: [id])
+
+  @@index([accountId, date])
+  @@index([normalizedMerchant])
+  @@index([categoryId])
+}
+
+model CategorizationRule {
+  id         String   @id @default(cuid())
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+  matchType  String
+  pattern    String
+  priority   Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([categoryId])
+}
+
+model MerchantCategoryCache {
+  normalizedMerchant String               @id
+  categoryId         String
+  source             CategorizationSource
+  confidence         Float?
+  sampleDescription  String?
+  hitCount           Int                  @default(1)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+}
+
+model RecurringExpenseGroup {
+  id                 String    @id @default(cuid())
+  userId             String
+  normalizedMerchant String
+  categoryId         String?
+  category           Category? @relation(fields: [categoryId], references: [id])
+  averageAmount      Decimal   @db.Decimal(18, 2)
+  intervalDays       Int
+  confidence         Float
+  status             String   @default("ACTIVE")
+  firstSeenAt        DateTime
+  lastSeenAt         DateTime
+  lastComputedAt     DateTime @default(now())
+
+  transactions Transaction[]
+
+  @@index([userId])
+  @@unique([userId, normalizedMerchant])
+}
+
+model WebhookEvent {
+  id             String    @id @default(cuid())
+  itemId         String?
+  item           Item?     @relation(fields: [itemId], references: [id])
+  eventType      String
+  payload        Json
+  signatureValid Boolean
+  processedAt    DateTime?
+  status         String    @default("PENDING")
+  error          String?
+  receivedAt     DateTime  @default(now())
+
+  @@index([itemId])
+  @@index([status])
+}
+
+model SyncLog {
+  id                  String    @id @default(cuid())
+  itemId              String
+  item                Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  trigger             String
+  status              String
+  transactionsCreated Int       @default(0)
+  transactionsUpdated Int       @default(0)
+  transactionsDeleted Int       @default(0)
+  startedAt           DateTime  @default(now())
+  finishedAt          DateTime?
+  error               String?
+
+  @@index([itemId])
+}
