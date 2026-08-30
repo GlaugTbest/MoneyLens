@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { BullModule } from '@nestjs/bullmq';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppConfigModule } from './config/config.module';
 import { AppConfigService } from './config/config.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -22,6 +23,9 @@ import { InsightsModule } from './insights/insights.module';
   imports: [
     AppConfigModule,
     ScheduleModule.forRoot(),
+    // Baseline global — rotas sensíveis (auth, connect-token) definem limites
+    // mais estritos via @Throttle() no próprio controller.
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
     BullModule.forRootAsync({
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
@@ -42,6 +46,10 @@ import { InsightsModule } from './insights/insights.module';
     InsightsModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

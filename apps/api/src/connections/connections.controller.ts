@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { ConnectionsService } from './connections.service';
 import { ConnectTokenDto } from './dto/connect-token.dto';
 import { RegisterConnectionDto } from './dto/register-connection.dto';
@@ -10,6 +11,7 @@ import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-us
 export class ConnectionsController {
   constructor(private readonly connections: ConnectionsService) {}
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('connect-token')
   createConnectToken(@CurrentUser() user: CurrentUserPayload, @Body() dto: ConnectTokenDto) {
     return this.connections.createConnectToken(user.userId, dto.itemId);

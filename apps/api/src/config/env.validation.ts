@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const envSchema = z.object({
+const baseSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().default(3001),
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
@@ -27,7 +27,20 @@ export const envSchema = z.object({
     .transform((v) => v === 'true'),
 });
 
-export type Env = z.infer<typeof envSchema>;
+// Em produção, o segredo do webhook é obrigatório: sem ele, o endpoint público
+// de webhook aceitaria qualquer payload (fail-open). Falhar o boot é melhor
+// que subir com autenticação de webhook desligada por engano.
+export const envSchema = baseSchema.superRefine((data, ctx) => {
+  if (data.NODE_ENV === 'production' && !data.PLUGGY_WEBHOOK_SECRET) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['PLUGGY_WEBHOOK_SECRET'],
+      message: 'Obrigatório em produção — sem ele, o webhook aceitaria qualquer requisição.',
+    });
+  }
+});
+
+export type Env = z.infer<typeof baseSchema>;
 
 export function validateEnv(config: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(config);

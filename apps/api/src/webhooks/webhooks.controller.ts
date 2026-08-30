@@ -1,5 +1,6 @@
 import { Body, Controller, Headers, HttpCode, HttpStatus, Post, UnauthorizedException } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -29,14 +30,20 @@ export class WebhooksController {
   ) {}
 
   @Public()
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @Post('pluggy')
   async handlePluggyWebhook(
     @Body() payload: PluggyWebhookPayload,
     @Headers('x-webhook-secret') secretHeader: string | undefined,
   ) {
+    // Em produção, PLUGGY_WEBHOOK_SECRET é obrigatório (validado no boot — ver
+    // env.validation.ts), então esse fallback só existe para dev local sem
+    // segredo configurado; qualquer segredo configurado precisa bater exato.
     const expectedSecret = this.config.pluggyWebhookSecret;
-    const signatureValid = !expectedSecret || secretHeader === expectedSecret;
+    const signatureValid = expectedSecret
+      ? secretHeader === expectedSecret
+      : this.config.nodeEnv !== 'production';
 
     // O itemId pode se referir a um Item que ainda não existe localmente
     // (ex.: webhook chegou antes do POST /api/connections concluir) — nesse
