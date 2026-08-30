@@ -1,9 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { PluggyConnect } from 'react-pluggy-connect';
+import dynamic from 'next/dynamic';
 import { Landmark, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+
+// react-pluggy-connect (via zoid) touches `window` at module-evaluation time,
+// which crashes Next's build-time prerendering of this page even though it's
+// a client component — ssr:false defers loading it to the actual browser.
+const PluggyConnect = dynamic(
+  () => import('react-pluggy-connect').then((mod) => mod.PluggyConnect),
+  { ssr: false },
+);
 
 interface Connection {
   id: string;
@@ -74,16 +82,36 @@ export default function ConnectionsPage() {
     }
   }
 
-  async function handleWidgetSuccess(data: { item: { id: string } }) {
-    setConnectToken(null);
+  async function registerConnection(itemId: string) {
     try {
       await apiFetch('/api/connections', {
         method: 'POST',
-        body: JSON.stringify({ itemId: data.item.id }),
+        body: JSON.stringify({ itemId }),
       });
       await loadConnections();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Erro ao registrar conexão');
+    }
+  }
+
+  async function handleWidgetSuccess(data: { item: { id: string } }) {
+    setConnectToken(null);
+    await registerConnection(data.item.id);
+  }
+
+  // onError também dispara quando o Item chega num status de falha (senha
+  // errada, MFA pendente, erro transitório do sandbox) — não só em falha
+  // geral de carregamento do widget. Nesse caso o Pluggy ainda manda o Item
+  // em `error.data.item`, e vale registrá-lo (aparece com status LOGIN_ERROR/
+  // WAITING_USER_INPUT e botão de reconectar) em vez de só mostrar um erro
+  // genérico e descartar a tentativa.
+  async function handleWidgetError(error: { message: string; data?: { item?: { id: string } } }) {
+    setConnectToken(null);
+    const itemId = error.data?.item?.id;
+    if (itemId) {
+      await registerConnection(itemId);
+    } else {
+      setError('Erro no widget de conexão');
     }
   }
 
@@ -209,7 +237,7 @@ export default function ConnectionsPage() {
           includeSandbox
           updateItem={reconnectItemId}
           onSuccess={handleWidgetSuccess}
-          onError={() => setError('Erro no widget de conexão')}
+          onError={handleWidgetError}
           onClose={() => setConnectToken(null)}
         />
       )}
