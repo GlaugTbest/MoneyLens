@@ -1,4 +1,7 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// Sempre relativo: o navegador só fala com a própria origem do Next.js, que
+// encaminha /api/* pro backend via rewrite (next.config.ts) — isso evita que
+// o cookie httpOnly de sessão vire um cookie cross-site em produção.
+const API_URL = '';
 
 export class ApiError extends Error {
   constructor(
