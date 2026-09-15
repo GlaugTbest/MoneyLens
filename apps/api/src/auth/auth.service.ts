@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -6,6 +7,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
@@ -27,6 +29,8 @@ export class AuthService {
   ) {}
 
   async register(email: string, password: string): Promise<TokenPair> {
+    email = email.trim().toLowerCase();
+    if (Buffer.byteLength(password, 'utf8') > 72) throw new BadRequestException('Senha deve ter no máximo 72 bytes');
     const existing = await this.users.findByEmail(email);
     if (existing) {
       throw new ConflictException('E-mail já cadastrado');
@@ -37,7 +41,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<TokenPair> {
-    const user = await this.users.findByEmail(email);
+    const user = await this.users.findByEmail(email.trim().toLowerCase());
     if (!user) {
       throw new UnauthorizedException('Credenciais inválidas');
     }
@@ -58,30 +62,26 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token inválido');
     }
 
-    const tokenHash = this.hashToken(refreshToken);
-    const stored = await this.prisma.refreshToken.findFirst({
-      where: { id: claims.jti, userId: claims.sub, tokenHash },
+    return this.prisma.$transaction(async (db) => {
+      const consumed = await db.refreshToken.updateMany({
+        where: { id: claims.jti, userId: claims.sub, tokenHash: this.hashToken(refreshToken), revokedAt: null, expiresAt: { gt: new Date() } },
+        data: { revokedAt: new Date() },
+      });
+      if (consumed.count !== 1) throw new UnauthorizedException('Refresh token inválido ou expirado');
+      return this.issueTokenPair(claims.sub, claims.email, db);
     });
-    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
-      throw new UnauthorizedException('Refresh token inválido ou expirado');
-    }
-
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date() },
-    });
-
-    return this.issueTokenPair(claims.sub, claims.email);
   }
 
-  async logout(userId: string) {
+  async logout(refreshToken?: string) {
+    if (!refreshToken) return;
+    // Revoke only this browser's refresh session, even if its access token expired.
     await this.prisma.refreshToken.updateMany({
-      where: { userId, revokedAt: null },
+      where: { tokenHash: this.hashToken(refreshToken), revokedAt: null },
       data: { revokedAt: new Date() },
     });
   }
 
-  private async issueTokenPair(userId: string, email: string): Promise<TokenPair> {
+  private async issueTokenPair(userId: string, email: string, db: Prisma.TransactionClient = this.prisma): Promise<TokenPair> {
     const accessToken = this.jwt.sign(
       { sub: userId, email },
       {
@@ -100,7 +100,7 @@ export class AuthService {
     );
 
     const decoded = this.jwt.decode(refreshToken) as { exp: number };
-    await this.prisma.refreshToken.create({
+    await db.refreshToken.create({
       data: {
         id: jti,
         userId,

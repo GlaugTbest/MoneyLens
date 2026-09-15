@@ -9,10 +9,10 @@ import { GeminiService } from './gemini.service';
 
 @Module({
   imports: [
-    HttpModule,
+    HttpModule.register({ timeout: 20_000, maxRedirects: 0 }),
     BullModule.registerQueue({
       name: CATEGORIZATION_QUEUE,
-      defaultJobOptions: { removeOnComplete: 100, removeOnFail: 500 },
+      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: 100, removeOnFail: 500 },
     }),
     InsightsModule,
   ],

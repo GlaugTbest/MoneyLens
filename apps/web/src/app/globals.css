@@ -8,7 +8,7 @@
   --border: #e4e4e9;
   --foreground: #16171b;
   --muted-foreground: #6c6e77;
-  --subtle-foreground: #9a9ca4;
+  --subtle-foreground: #6c6e77;
 
   /* Sidebar — a deliberately darker second neutral layer, fixed across themes */
   --sidebar-bg: #17181d;
@@ -73,13 +73,14 @@
     --border: #2c2d33;
     --foreground: #f1f1f3;
     --muted-foreground: #9a9ca4;
-    --subtle-foreground: #6c6e77;
+    --subtle-foreground: #9a9ca4;
 
     --sidebar-bg: #030304;
     --sidebar-border: rgba(255, 255, 255, 0.06);
 
     --accent: #7b7bea;
     --accent-hover: #8f8fef;
+    --accent-foreground: #131316;
     --accent-tint: #201f38;
 
     --positive: #3ecf8e;
@@ -153,4 +154,13 @@ body {
   background: linear-gradient(90deg, var(--border) 0%, var(--surface-hover) 50%, var(--border) 100%);
   background-size: 800px 100%;
   animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--border); }
+  .animate-spin { animation: none; }
+}
+
+@media (max-width: 767px) {
+  input, select { font-size: 16px; }
 }

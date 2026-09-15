@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -52,23 +53,23 @@ export class GeminiService {
             contents: [{ parts: [{ text: prompt }] }],
             generationConfig: { responseMimeType: 'application/json', temperature: 0 },
           },
-          { params: { key: this.config.geminiApiKey } },
+          { headers: { 'x-goog-api-key': this.config.geminiApiKey } },
         ),
       );
 
       const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '[]';
-      const parsed = JSON.parse(text) as Array<{
-        index: number;
-        category: string;
-        confidence: number;
-      }>;
-
-      return parsed
-        .filter((p) => CATEGORY_SLUGS.includes(p.category))
-        .map((p) => ({ index: p.index, categorySlug: p.category, confidence: p.confidence }));
-    } catch (err) {
-      this.logger.error('Falha ao classificar via Gemini', err as Error);
-      return [];
+      const parsed = z.array(z.object({
+        index: z.number().int().min(0).max(items.length - 1),
+        category: z.string().refine((value) => CATEGORY_SLUGS.includes(value)),
+        confidence: z.number().finite().min(0).max(1),
+      })).length(items.length).parse(JSON.parse(text));
+      if (new Set(parsed.map((entry) => entry.index)).size !== items.length) {
+        throw new Error('Índices repetidos na classificação');
+      }
+      return parsed.map((p) => ({ index: p.index, categorySlug: p.category, confidence: p.confidence }));
+    } catch {
+      this.logger.warn('Classificação indisponível; o lote continuará pendente para nova tentativa.');
+      throw new Error('Falha temporária ou resposta inválida na categorização');
     }
   }
 

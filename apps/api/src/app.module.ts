@@ -1,3 +1,5 @@
+import { OriginGuard } from './auth/guards/origin.guard';
+import { HealthController } from './health.controller';
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { BullModule } from '@nestjs/bullmq';
@@ -45,7 +47,9 @@ import { InsightsModule } from './insights/insights.module';
     CategorizationModule,
     InsightsModule,
   ],
+  controllers: [HealthController],
   providers: [
+    { provide: APP_GUARD, useClass: OriginGuard },
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

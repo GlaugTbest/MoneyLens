@@ -1,4 +1,6 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, Post, UnauthorizedException } from '@nestjs/common';
+import { timingSafeEqual } from 'crypto';
+import { z } from 'zod';
+import { BadRequestException, Body, Controller, Headers, HttpCode, HttpStatus, Post, UnauthorizedException } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -8,14 +10,12 @@ import { AppConfigService } from '../config/config.service';
 import { Public } from '../common/decorators/public.decorator';
 import { WEBHOOKS_QUEUE, WEBHOOK_PROCESS_JOB } from '../queue/queue.constants';
 
-interface PluggyWebhookPayload {
-  event: string;
-  eventId: string;
-  itemId?: string;
-  clientUserId?: string;
-  transactionIds?: string[];
-  [key: string]: unknown;
-}
+const webhookSchema = z.object({
+  event: z.string().min(1).max(100),
+  eventId: z.string().min(1).max(200),
+  itemId: z.string().min(1).max(200).optional(),
+  transactionIds: z.array(z.string().min(1).max(200)).max(1000).optional(),
+}).passthrough();
 
 // Endpoint público chamado pelo Pluggy. O Pluggy não assina os payloads por
 // padrão, então a autenticação é feita via um header customizado, registrado
@@ -34,46 +34,39 @@ export class WebhooksController {
   @HttpCode(HttpStatus.OK)
   @Post('pluggy')
   async handlePluggyWebhook(
-    @Body() payload: PluggyWebhookPayload,
+    @Body() body: unknown,
     @Headers('x-webhook-secret') secretHeader: string | undefined,
   ) {
-    // Em produção, PLUGGY_WEBHOOK_SECRET é obrigatório (validado no boot — ver
-    // env.validation.ts), então esse fallback só existe para dev local sem
-    // segredo configurado; qualquer segredo configurado precisa bater exato.
-    const expectedSecret = this.config.pluggyWebhookSecret;
-    const signatureValid = expectedSecret
-      ? secretHeader === expectedSecret
+    const expected = this.config.pluggyWebhookSecret;
+    const signatureValid = expected
+      ? Boolean(secretHeader && Buffer.byteLength(secretHeader) === Buffer.byteLength(expected)
+          && timingSafeEqual(Buffer.from(secretHeader), Buffer.from(expected)))
       : this.config.nodeEnv !== 'production';
+    if (!signatureValid) throw new UnauthorizedException();
 
-    // O itemId pode se referir a um Item que ainda não existe localmente
-    // (ex.: webhook chegou antes do POST /api/connections concluir) — nesse
-    // caso guardamos o evento sem a FK, mas o itemId original continua no
-    // payload bruto para depuração.
+    const parsed = webhookSchema.safeParse(body);
+    if (!parsed.success) throw new BadRequestException('Payload de webhook inválido');
+    const payload = parsed.data;
     const knownItem = payload.itemId
       ? await this.prisma.item.findUnique({ where: { id: payload.itemId } })
       : null;
-
-    const event = await this.prisma.webhookEvent.create({
-      data: {
+    const event = await this.prisma.webhookEvent.upsert({
+      where: { externalEventId: payload.eventId },
+      create: {
+        externalEventId: payload.eventId,
         itemId: knownItem?.id ?? null,
         eventType: payload.event,
-        payload: payload as unknown as object,
-        signatureValid,
+        payload: payload as object,
+        signatureValid: true,
       },
+      update: {},
     });
-
-    if (!signatureValid) {
-      await this.prisma.webhookEvent.update({
-        where: { id: event.id },
-        data: { status: 'FAILED', error: 'Assinatura/segredo inválido' },
+    if (event.status !== 'PROCESSED') {
+      // A retry after a Redis outage finds the same durable event and queues it again.
+      await this.webhooksQueue.add(WEBHOOK_PROCESS_JOB, { webhookEventId: event.id }, {
+        deduplication: { id: event.id },
       });
-      throw new UnauthorizedException();
     }
-
-    // Handler fica intencionalmente rápido: persiste e enfileira, o
-    // processamento de fato acontece no worker.
-    await this.webhooksQueue.add(WEBHOOK_PROCESS_JOB, { webhookEventId: event.id });
-
     return { received: true };
   }
 }

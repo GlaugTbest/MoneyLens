@@ -1,6 +1,6 @@
 # Build context is the monorepo root (npm workspaces need every workspace's
 # package.json present to resolve the lockfile correctly).
-FROM node:20-alpine
+FROM node:24-alpine
 
 # Prisma's query engine needs a matching libssl on Alpine, or it silently
 # defaults to the wrong version and can fail at runtime.
@@ -18,6 +18,8 @@ COPY apps/api apps/api
 WORKDIR /repo/apps/api
 RUN npx prisma generate
 RUN npm run build
+
+ENV NODE_ENV=production
 
 EXPOSE 3001
 

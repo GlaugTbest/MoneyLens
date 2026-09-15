@@ -28,7 +28,7 @@ export class AuthController {
   async register(@Body() dto: RegisterDto, @Res({ passthrough: true }) res: Response) {
     const tokens = await this.auth.register(dto.email, dto.password);
     this.setAuthCookies(res, tokens);
-    return tokens;
+    return { authenticated: true };
   }
 
   @Public()
@@ -38,7 +38,7 @@ export class AuthController {
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const tokens = await this.auth.login(dto.email, dto.password);
     this.setAuthCookies(res, tokens);
-    return tokens;
+    return { authenticated: true };
   }
 
   @Public()
@@ -56,18 +56,28 @@ export class AuthController {
     const refreshToken = dto.refreshToken ?? req.cookies?.[REFRESH_TOKEN_COOKIE];
     if (!refreshToken) throw new UnauthorizedException('Refresh token ausente');
 
-    const tokens = await this.auth.refresh(refreshToken);
-    this.setAuthCookies(res, tokens);
-    return tokens;
+    try {
+      const tokens = await this.auth.refresh(refreshToken);
+      this.setAuthCookies(res, tokens);
+      return { authenticated: true };
+    } catch (err) {
+      if (err instanceof UnauthorizedException) this.clearAuthCookies(res);
+      throw err;
+    }
   }
 
+  @Public()
   @HttpCode(HttpStatus.NO_CONTENT)
   @Post('logout')
   async logout(
-    @CurrentUser() user: CurrentUserPayload,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.auth.logout(user.userId);
+    await this.auth.logout(req.cookies?.[REFRESH_TOKEN_COOKIE]);
+    this.clearAuthCookies(res);
+  }
+
+  private clearAuthCookies(res: Response) {
     res.clearCookie(ACCESS_TOKEN_COOKIE, { path: '/' });
     res.clearCookie(REFRESH_TOKEN_COOKIE, { path: '/' });
   }

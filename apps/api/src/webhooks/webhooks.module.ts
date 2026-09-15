@@ -9,7 +9,7 @@ import { WebhooksProcessor } from './webhooks.processor';
   imports: [
     BullModule.registerQueue({
       name: WEBHOOKS_QUEUE,
-      defaultJobOptions: { removeOnComplete: 200, removeOnFail: 1000 },
+      defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: 200, removeOnFail: 1000 },
     }),
     SyncModule,
   ],

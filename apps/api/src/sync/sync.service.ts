@@ -33,14 +33,14 @@ export class SyncService {
     await this.syncQueue.add(
       SYNC_JOB,
       { itemId, trigger },
-      { jobId: `${itemId}_${trigger === 'MANUAL' ? Date.now() : trigger}` },
+      { deduplication: { id: itemId, keepLastIfActive: true } },
     );
   }
 
   async syncItemStatus(itemId: string): Promise<PluggyItem> {
     const remote = await this.pluggy.getItem(itemId);
-    await this.prisma.item.update({
-      where: { id: itemId },
+    await this.prisma.item.updateMany({
+      where: { id: itemId, status: { not: 'DELETED' } },
       data: {
         status: mapPluggyStatus(remote.status),
         executionStatus: remote.executionStatus,
@@ -53,13 +53,14 @@ export class SyncService {
   }
 
   async runSync(itemId: string, trigger: SyncTrigger) {
+    const localItem = await this.prisma.item.findUnique({ where: { id: itemId } });
+    if (!localItem || localItem.status === 'DELETED') return;
     const syncLog = await this.prisma.syncLog.create({
       data: { itemId, trigger, status: 'RUNNING' },
     });
 
     let created = 0;
     let updated = 0;
-    const newTransactionIds: string[] = [];
 
     try {
       const remoteItem = await this.syncItemStatus(itemId);
@@ -134,7 +135,6 @@ export class SyncService {
               updated += 1;
             } else {
               created += 1;
-              newTransactionIds.push(tx.id);
             }
           }
         }
@@ -158,9 +158,14 @@ export class SyncService {
         },
       });
 
-      if (newTransactionIds.length > 0) {
+      // Recover uncategorized records left by a partially completed earlier sync.
+      const pending = await this.prisma.transaction.findMany({
+        where: { account: { itemId }, categoryId: null, deletedAt: null },
+        select: { id: true },
+      });
+      for (let offset = 0; offset < pending.length; offset += 200) {
         await this.categorizationQueue.add(CATEGORIZE_BATCH_JOB, {
-          transactionIds: newTransactionIds,
+          transactionIds: pending.slice(offset, offset + 200).map((tx) => tx.id),
         });
       }
 

@@ -44,6 +44,7 @@ export default function RegisterPage() {
         <input
           id="email"
           type="email"
+          autoComplete="email"
           required
           autoFocus
           value={email}
@@ -59,6 +60,8 @@ export default function RegisterPage() {
         <input
           id="password"
           type="password"
+          autoComplete="new-password"
+          maxLength={72}
           required
           minLength={8}
           value={password}
@@ -68,7 +71,7 @@ export default function RegisterPage() {
         <p className="text-xs text-subtle-foreground">Mínimo de 8 caracteres.</p>
       </div>
 
-      {error && <p className="text-sm text-negative">{error}</p>}
+      {error && <p role="alert" className="text-sm text-negative">{error}</p>}
 
       <button
         type="submit"

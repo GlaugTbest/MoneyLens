@@ -1,29 +1,26 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowUpRight, TrendingUp, RefreshCw, TriangleAlert } from 'lucide-react';
-import { apiFetch, InsightsSummary } from '@/lib/api';
+import { InsightsSummary } from '@/lib/api';
 import { formatBRL } from '@/lib/format';
 import { CategoryIcon } from '@/components/category-icon';
 import { SpendBarChart } from '@/components/spend-bar-chart';
+import { useApiResource } from '@/lib/use-api-resource';
+import { LoadError } from '@/components/load-error';
 
 function SkeletonBlock({ className }: { className: string }) {
   return <div className={`skeleton ${className}`} />;
 }
 
 export default function DashboardPage() {
-  const [summary, setSummary] = useState<InsightsSummary | null>(null);
-  const [hasConnections, setHasConnections] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    apiFetch<InsightsSummary>('/api/insights/summary')
-      .then(setSummary)
-      .catch(() => setSummary(null));
-    apiFetch<unknown[]>('/api/connections')
-      .then((c) => setHasConnections(c.length > 0))
-      .catch(() => setHasConnections(false));
-  }, []);
+  const summaryResource = useApiResource<InsightsSummary>('/api/insights/summary');
+  const connectionsResource = useApiResource<unknown[]>('/api/connections');
+  const summary = summaryResource.data;
+  const hasConnections = connectionsResource.data ? connectionsResource.data.length > 0 : null;
+  if (summaryResource.error || connectionsResource.error) {
+    return <LoadError message={summaryResource.error ?? connectionsResource.error ?? ''} retry={() => { summaryResource.reload(); connectionsResource.reload(); }} />;
+  }
 
   if (hasConnections === false) {
     return (
@@ -49,29 +46,21 @@ export default function DashboardPage() {
 
   const evolution = summary?.spendEvolution ?? [];
   const lastMonth = evolution.at(-1)?.totalSpent ?? 0;
-  const prevMonth = evolution.at(-2)?.totalSpent;
-  const delta = prevMonth ? (lastMonth - prevMonth) / prevMonth : null;
+
 
   return (
     <div className="space-y-8">
-      <h1 className="text-[22px] font-semibold tracking-tight">Visão geral</h1>
+      <div><h1 className="text-[22px] font-semibold tracking-tight">Visão geral</h1><p className="mt-1 text-sm text-muted-foreground">Saídas em BRL, incluindo transferências e pagamentos de fatura. Valores de demonstração.</p></div>
 
       <section className="grid grid-cols-1 gap-0 overflow-hidden rounded-xl border border-border bg-surface shadow-sm sm:grid-cols-[220px_1fr]">
         <div className="flex flex-col justify-center gap-2 border-b border-border p-6 sm:border-b-0 sm:border-r">
-          <p className="text-xs font-medium text-muted-foreground">Gasto do último mês</p>
+          <p className="text-xs font-medium text-muted-foreground">Saídas deste mês</p>
           {summary ? (
             <>
               <p className="text-3xl font-semibold tabular-nums tracking-tight">
                 {formatBRL(lastMonth)}
               </p>
-              {delta !== null && (
-                <p
-                  className={`text-xs font-medium ${delta > 0 ? 'text-negative' : 'text-positive'}`}
-                >
-                  {delta > 0 ? '+' : ''}
-                  {Math.round(delta * 100)}% vs. mês anterior
-                </p>
-              )}
+              <p className="text-xs text-muted-foreground">Mês em andamento · BRL</p>
             </>
           ) : (
             <SkeletonBlock className="h-8 w-28" />
@@ -89,12 +78,12 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section className="rounded-xl border border-border bg-surface p-5 shadow-sm">
-          <h2 className="mb-4 text-[13px] font-medium text-muted-foreground">Maiores categorias</h2>
+          <h2 className="mb-4 text-[13px] font-medium text-muted-foreground">Maiores categorias · últimos 6 meses</h2>
           <ul className="space-y-3.5">
             {summary?.topCategories.map((c) => (
               <li key={c.categoryId ?? 'none'} className="flex items-center gap-3">
                 <CategoryIcon slug={c.categorySlug} className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="w-28 shrink-0 truncate text-sm">{c.categoryName}</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{c.categoryName}</span>
                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-border">
                   <div
                     className="h-full rounded-full bg-accent"
@@ -125,7 +114,7 @@ export default function DashboardPage() {
               <span className="font-semibold">{summary?.recurringCount ?? 0}</span> despesas
               recorrentes ·{' '}
               <span className="font-medium">{formatBRL(summary?.recurringMonthlyTotal ?? 0)}</span>
-              /mês
+              /mês estimado
             </p>
           </div>
 

@@ -41,7 +41,7 @@ export class CategorizationService {
     const outrosId = categoryIdBySlug.get(OUTROS_SLUG);
 
     const transactions = await this.prisma.transaction.findMany({
-      where: { id: { in: transactionIds }, categoryId: null },
+      where: { id: { in: transactionIds }, categoryId: null, deletedAt: null, account: { item: { status: { not: 'DELETED' } } } },
       include: { account: { select: { item: { select: { userId: true } } } } },
     });
 
@@ -54,7 +54,7 @@ export class CategorizationService {
           })
         : null;
 
-      if (cacheHit) {
+      if (cacheHit && cacheHit.source !== 'MANUAL') {
         await this.applyCategory(tx.id, cacheHit.categoryId, cacheHit.source, cacheHit.confidence);
         await this.bumpCacheHit(cacheHit.normalizedMerchant);
         continue;
@@ -64,7 +64,7 @@ export class CategorizationService {
       if (ruleMatch) {
         await this.applyCategory(tx.id, ruleMatch, 'RULE', null);
         if (tx.normalizedMerchant) {
-          await this.writeCache(tx.normalizedMerchant, ruleMatch, 'RULE', null, tx.description);
+          await this.writeCache(tx.normalizedMerchant, ruleMatch, 'RULE', null);
         }
         continue;
       }
@@ -74,7 +74,7 @@ export class CategorizationService {
       if (pluggyCategoryId) {
         await this.applyCategory(tx.id, pluggyCategoryId, 'PLUGGY', null);
         if (tx.normalizedMerchant) {
-          await this.writeCache(tx.normalizedMerchant, pluggyCategoryId, 'PLUGGY', null, tx.description);
+          await this.writeCache(tx.normalizedMerchant, pluggyCategoryId, 'PLUGGY', null);
         }
         continue;
       }
@@ -104,7 +104,7 @@ export class CategorizationService {
           await this.applyCategory(item.id, categoryId, 'LLM', result.confidence);
           const tx = transactions.find((t) => t.id === item.id);
           if (tx?.normalizedMerchant) {
-            await this.writeCache(tx.normalizedMerchant, categoryId, 'LLM', result.confidence, item.description);
+            await this.writeCache(tx.normalizedMerchant, categoryId, 'LLM', result.confidence);
           }
         } else if (outrosId) {
           await this.applyCategory(item.id, outrosId, 'RULE', null);
@@ -151,8 +151,8 @@ export class CategorizationService {
     source: CategorizationSource,
     confidence: number | null,
   ) {
-    return this.prisma.transaction.update({
-      where: { id: transactionId },
+    return this.prisma.transaction.updateMany({
+      where: { id: transactionId, categoryId: null, deletedAt: null, account: { item: { status: { not: 'DELETED' } } } },
       data: { categoryId, categorizationSource: source, categorizationConfidence: confidence },
     });
   }
@@ -162,11 +162,10 @@ export class CategorizationService {
     categoryId: string,
     source: CategorizationSource,
     confidence: number | null,
-    sampleDescription: string,
   ) {
     return this.prisma.merchantCategoryCache.upsert({
       where: { normalizedMerchant },
-      create: { normalizedMerchant, categoryId, source, confidence, sampleDescription },
+      create: { normalizedMerchant, categoryId, source, confidence },
       update: { categoryId, source, confidence },
     });
   }

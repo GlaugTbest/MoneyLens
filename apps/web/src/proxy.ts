@@ -5,7 +5,6 @@ import { NextRequest, NextResponse } from 'next/server';
 // sob demanda (ver lib/api.ts) quando uma chamada à API volta 401.
 const REFRESH_TOKEN_COOKIE = 'ml_refresh_token';
 const PROTECTED_PREFIXES = ['/dashboard', '/connections', '/transactions', '/insights'];
-const AUTH_ROUTES = ['/login', '/register'];
 
 // Optimistic check only (presence of the cookie, not signature/expiry) — the
 // real verification happens on every API request via the NestJS JwtAuthGuard.
@@ -20,10 +19,6 @@ export function proxy(req: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   if (isProtected && !hasSession) {
     return NextResponse.redirect(new URL('/login', req.url));
-  }
-
-  if (AUTH_ROUTES.includes(pathname) && hasSession) {
-    return NextResponse.redirect(new URL('/dashboard', req.url));
   }
 
   return NextResponse.next();

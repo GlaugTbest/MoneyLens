@@ -23,7 +23,7 @@ const baseSchema = z.object({
   GEMINI_MODEL: z.string().default('gemini-3.6-flash'),
   ENABLE_LLM_CATEGORIZATION: z
     .string()
-    .default('true')
+    .default('false')
     .transform((v) => v === 'true'),
 });
 

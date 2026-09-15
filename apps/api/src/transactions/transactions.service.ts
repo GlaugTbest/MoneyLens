@@ -10,7 +10,7 @@ export class TransactionsService {
   async list(userId: string, query: ListTransactionsDto) {
     const where: Prisma.TransactionWhereInput = {
       deletedAt: null,
-      account: { item: { userId } },
+      account: { item: { userId, status: { not: 'DELETED' } } },
       ...(query.accountId ? { accountId: query.accountId } : {}),
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
       ...(query.from || query.to
@@ -31,22 +31,23 @@ export class TransactionsService {
       this.prisma.transaction.findMany({
         where,
         include: { category: true },
-        orderBy: { date: 'desc' },
+        orderBy: [{ date: 'desc' }, { id: 'desc' }],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
     ]);
 
-    return { total, page: query.page, pageSize: query.pageSize, results };
+    return { total, page: query.page, pageSize: query.pageSize, results: results.map(({ raw: _raw, ...tx }) => tx) };
   }
 
   async getForUser(userId: string, id: string) {
     const tx = await this.prisma.transaction.findFirst({
-      where: { id, account: { item: { userId } } },
+      where: { id, deletedAt: null, account: { item: { userId, status: { not: 'DELETED' } } } },
       include: { category: true },
     });
-    if (!tx) throw new NotFoundException('Transação não encontrada');
-    return tx;
+    if (!tx || tx.deletedAt) throw new NotFoundException('Transação não encontrada');
+    const { raw: _raw, ...result } = tx;
+    return result;
   }
 
   async updateCategory(userId: string, id: string, categoryId: string) {
@@ -54,8 +55,8 @@ export class TransactionsService {
       where: { id },
       include: { account: { include: { item: true } } },
     });
-    if (!tx) throw new NotFoundException('Transação não encontrada');
-    if (tx.account.item.userId !== userId) throw new ForbiddenException();
+    if (!tx || tx.deletedAt) throw new NotFoundException('Transação não encontrada');
+    if (tx.account.item.userId !== userId || tx.account.item.status === 'DELETED') throw new ForbiddenException();
 
     const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
     if (!category) throw new NotFoundException('Categoria não encontrada');
@@ -66,20 +67,8 @@ export class TransactionsService {
       include: { category: true },
     });
 
-    if (tx.normalizedMerchant) {
-      await this.prisma.merchantCategoryCache.upsert({
-        where: { normalizedMerchant: tx.normalizedMerchant },
-        create: {
-          normalizedMerchant: tx.normalizedMerchant,
-          categoryId,
-          source: 'MANUAL',
-          confidence: 1,
-          sampleDescription: tx.description,
-        },
-        update: { categoryId, source: 'MANUAL', confidence: 1 },
-      });
-    }
 
-    return updated;
+    const { raw: _raw, ...result } = updated;
+    return result;
   }
 }

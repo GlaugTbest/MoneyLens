@@ -24,10 +24,16 @@ export class WebhooksProcessor extends WorkerHost {
     const event = await this.prisma.webhookEvent.findUnique({
       where: { id: job.data.webhookEventId },
     });
-    if (!event || event.status === 'PROCESSED') return;
+    if (!event || !event.signatureValid || event.status === 'PROCESSED') return;
 
     try {
-      await this.dispatch(event.eventType, event.itemId, event.payload as Record<string, unknown>);
+      const payload = event.payload as Record<string, unknown>;
+      const itemId = event.itemId ?? (typeof payload.itemId === 'string' ? payload.itemId : null);
+      if (itemId) {
+        const item = await this.prisma.item.findUnique({ where: { id: itemId } });
+        if (!item) throw new Error('Conexão ainda não registrada; aguardando nova tentativa');
+        if (item.status !== 'DELETED') await this.dispatch(event.eventType, itemId, payload);
+      }
       await this.prisma.webhookEvent.update({
         where: { id: event.id },
         data: { status: 'PROCESSED', processedAt: new Date() },
@@ -75,9 +81,9 @@ export class WebhooksProcessor extends WorkerHost {
       }
       case 'transactions/deleted': {
         const transactionIds = (payload.transactionIds as string[] | undefined) ?? [];
-        if (transactionIds.length > 0) {
+        if (itemId && transactionIds.length > 0) {
           await this.prisma.transaction.updateMany({
-            where: { id: { in: transactionIds } },
+            where: { id: { in: transactionIds }, account: { itemId } },
             data: { deletedAt: new Date() },
           });
         }

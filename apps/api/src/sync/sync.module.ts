@@ -7,7 +7,7 @@ import { SyncService } from './sync.service';
 import { SyncProcessor } from './sync.processor';
 import { SyncPollingService } from './sync-polling.service';
 
-const defaultJobOptions = { removeOnComplete: 100, removeOnFail: 500 };
+const defaultJobOptions = { attempts: 3, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: 100, removeOnFail: 500 };
 
 @Module({
   imports: [

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Landmark, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { apiFetch, ApiError } from '@/lib/api';
+import { LoadError } from '@/components/load-error';
 
 // react-pluggy-connect (via zoid) touches `window` at module-evaluation time,
 // which crashes Next's build-time prerendering of this page even though it's
@@ -33,7 +34,7 @@ const STATUS_META: Record<string, { label: string; dot: string; text: string }> 
 
 function SkeletonRow() {
   return (
-    <li className="flex items-center justify-between gap-4 p-4">
+    <li className="flex flex-wrap items-center justify-between gap-4 p-4">
       <div className="flex items-center gap-3">
         <div className="skeleton h-9 w-9 rounded-full" />
         <div className="space-y-2">
@@ -51,25 +52,32 @@ export default function ConnectionsPage() {
   const [connectToken, setConnectToken] = useState<string | null>(null);
   const [reconnectItemId, setReconnectItemId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   const loadConnections = useCallback(async () => {
     const data = await apiFetch<Connection[]>('/api/connections');
     setConnections(data);
+    setLoadError(null);
   }, []);
 
   useEffect(() => {
-    loadConnections().catch(() => setConnections([]));
+    apiFetch<Connection[]>('/api/connections').then(setConnections).catch(() => setLoadError('Confira sua conexão e tente novamente.'));
   }, [loadConnections]);
 
   useEffect(() => {
-    const hasUpdating = connections?.some((c) => c.status === 'UPDATING');
-    if (!hasUpdating) return;
-    const interval = setInterval(() => loadConnections().catch(() => undefined), 4000);
+    if (!connections?.length) return;
+    const interval = setInterval(() => loadConnections().catch(() => setLoadError('Não foi possível atualizar as conexões.')), 8000);
     return () => clearInterval(interval);
   }, [connections, loadConnections]);
 
   async function openWidget(itemId?: string) {
+    if (pending) return;
     setError(null);
+    setNotice(null);
+    setPending('operation');
     try {
       const { connectToken } = await apiFetch<{ connectToken: string }>(
         '/api/connections/connect-token',
@@ -79,7 +87,7 @@ export default function ConnectionsPage() {
       setConnectToken(connectToken);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Erro ao iniciar conexão');
-    }
+    } finally { setPending(null); }
   }
 
   async function registerConnection(itemId: string) {
@@ -116,30 +124,38 @@ export default function ConnectionsPage() {
   }
 
   async function handleSync(id: string) {
+    if (pending) return;
     setError(null);
+    setNotice(null);
+    setPending('operation');
     try {
       await apiFetch(`/api/connections/${id}/sync`, { method: 'POST' });
+      setNotice('Sincronização solicitada. A data abaixo será atualizada quando os dados forem recebidos.');
       await loadConnections();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Erro ao sincronizar');
-    }
+    } finally { setPending(null); }
   }
 
   async function handleRemove(id: string) {
+    if (pending) return;
     setError(null);
+    setNotice(null);
+    setPending('operation');
     try {
       await apiFetch(`/api/connections/${id}`, { method: 'DELETE' });
       await loadConnections();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Erro ao remover conexão');
-    }
+    } finally { setPending(null); setRemoving(null); }
   }
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[22px] font-semibold tracking-tight">Conexões</h1>
         <button
+          disabled={pending !== null || connectToken !== null}
           onClick={() => openWidget(undefined)}
           className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3.5 py-2 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover"
         >
@@ -148,13 +164,14 @@ export default function ConnectionsPage() {
         </button>
       </div>
 
+      {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
       {error && (
-        <p className="rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-warning-foreground">
+        <p role="alert" className="rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-warning-foreground">
           {error}
         </p>
       )}
 
-      {connections === null ? (
+      {loadError ? <LoadError message={loadError} retry={() => { loadConnections().catch(() => setLoadError('Confira sua conexão e tente novamente.')); }} /> : connections === null ? (
         <ul className="divide-y divide-border rounded-xl border border-border bg-surface shadow-sm">
           <SkeletonRow />
           <SkeletonRow />
@@ -179,7 +196,7 @@ export default function ConnectionsPage() {
             };
             const needsReconnect = c.status === 'LOGIN_ERROR' || c.status === 'WAITING_USER_INPUT';
             return (
-              <li key={c.id} className="flex items-center justify-between gap-4 p-4">
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-4 p-4">
                 <div className="flex items-center gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-tint">
                     <Landmark className="h-4 w-4 text-accent" strokeWidth={1.75} />
@@ -201,6 +218,7 @@ export default function ConnectionsPage() {
                   </span>
                   {needsReconnect ? (
                     <button
+                      disabled={pending !== null}
                       onClick={() => openWidget(c.id)}
                       className="text-xs font-medium text-accent hover:underline"
                     >
@@ -208,19 +226,21 @@ export default function ConnectionsPage() {
                     </button>
                   ) : (
                     <button
+                      disabled={pending !== null}
                       onClick={() => handleSync(c.id)}
                       aria-label="Sincronizar"
                       title="Sincronizar"
-                      className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground"
+                      className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-hover hover:text-foreground"
                     >
                       <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
                     </button>
                   )}
                   <button
-                    onClick={() => handleRemove(c.id)}
+                    disabled={pending !== null}
+                    onClick={() => setRemoving(c.id)}
                     aria-label="Remover"
                     title="Remover"
-                    className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-warning-bg hover:text-negative"
+                    className="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-warning-bg hover:text-negative"
                   >
                     <Trash2 className="h-4 w-4" strokeWidth={1.75} />
                   </button>
@@ -229,6 +249,16 @@ export default function ConnectionsPage() {
             );
           })}
         </ul>
+      )}
+
+      {removing && (
+        <div role="region" aria-label="Confirmar desconexão" className="rounded-lg border border-warning-border bg-warning-bg p-4 text-sm text-warning-foreground">
+          <p>Desconectar este banco? O histórico será mantido no banco de dados, mas ficará fora das telas e dos totais.</p>
+          <div className="mt-2 flex gap-4">
+            <button disabled={pending !== null} className="min-h-11 font-medium underline" onClick={() => handleRemove(removing)}>Confirmar desconexão</button>
+            <button disabled={pending !== null} className="min-h-11" onClick={() => setRemoving(null)}>Cancelar</button>
+          </div>
+        </div>
       )}
 
       {connectToken && (

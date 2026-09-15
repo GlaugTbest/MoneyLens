@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { apiFetch, Category, Transaction, TransactionsPage as TransactionsPageData } from '@/lib/api';
-import { formatBRL } from '@/lib/format';
 import { CategoryIcon } from '@/components/category-icon';
+import { useApiResource } from '@/lib/use-api-resource';
+import { LoadError } from '@/components/load-error';
 
 const SOURCE_LABEL: Record<string, string> = {
   RULE: 'Regra',
@@ -33,35 +34,31 @@ function SkeletonRow() {
 }
 
 export default function TransactionsPage() {
-  const [data, setData] = useState<TransactionsPageData | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-
-  useEffect(() => {
-    apiFetch<Category[]>('/api/categories').then(setCategories).catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    setData(null);
-    const params = new URLSearchParams({ page: String(page), pageSize: '25' });
-    if (search) params.set('search', search);
-    const handle = setTimeout(() => {
-      apiFetch<TransactionsPageData>(`/api/transactions?${params}`)
-        .then(setData)
-        .catch(() => setData({ total: 0, page: 1, pageSize: 25, results: [] }));
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [page, search]);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const params = new URLSearchParams({ page: String(page), pageSize: '25' });
+  if (search) params.set('search', search);
+  const resource = useApiResource<TransactionsPageData>(`/api/transactions?${params}`, 250);
+  const categoryResource = useApiResource<Category[]>('/api/categories');
+  const data = resource.data;
+  const categories = categoryResource.data ?? [];
 
   async function updateCategory(tx: Transaction, categoryId: string) {
-    const updated = await apiFetch<Transaction>(`/api/transactions/${tx.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ categoryId }),
-    });
-    setData((prev) =>
-      prev ? { ...prev, results: prev.results.map((t) => (t.id === tx.id ? updated : t)) } : prev,
-    );
+    if (saving) return;
+    setSaving(tx.id);
+    setSaveError(null);
+    try {
+      const updated = await apiFetch<Transaction>(`/api/transactions/${tx.id}`, {
+        method: 'PATCH', body: JSON.stringify({ categoryId }),
+      });
+      resource.update((current) => ({ ...current, results: current.results.map((t) => t.id === tx.id ? updated : t) }));
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Não foi possível salvar a categoria');
+    } finally {
+      setSaving(null);
+    }
   }
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
@@ -76,6 +73,8 @@ export default function TransactionsPage() {
             strokeWidth={1.75}
           />
           <input
+            aria-label="Buscar transações por descrição"
+            maxLength={200}
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -87,7 +86,9 @@ export default function TransactionsPage() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
+      {saveError && <p role="alert" className="text-sm text-negative">{saveError}. Tente selecionar a categoria novamente.</p>}
+      {categoryResource.error && <LoadError message={categoryResource.error} retry={categoryResource.reload} />}
+      {resource.error ? <LoadError message={resource.error} retry={resource.reload} /> : <div className="overflow-x-auto rounded-xl border border-border bg-surface shadow-sm">
         <table className="w-full min-w-[560px] text-sm">
           <thead className="border-b border-border text-left text-xs font-medium text-muted-foreground">
             <tr>
@@ -101,13 +102,15 @@ export default function TransactionsPage() {
             {data?.results.map((t) => (
               <tr key={t.id} className="transition-colors hover:bg-surface-hover">
                 <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
-                  {new Date(t.date).toLocaleDateString('pt-BR')}
+                  {new Date(t.date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
                 </td>
                 <td className="px-5 py-3">{t.description}</td>
                 <td className="px-5 py-3">
                   <div className="flex items-center gap-2">
                     <CategoryIcon slug={t.category?.slug} className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <select
+                      aria-label={`Categoria de ${t.description}`}
+                      disabled={saving !== null || categories.length === 0}
                       value={t.categoryId ?? ''}
                       onChange={(e) => updateCategory(t, e.target.value)}
                       className="rounded border border-transparent bg-transparent py-0.5 text-sm outline-none hover:border-border focus:border-accent"
@@ -133,7 +136,7 @@ export default function TransactionsPage() {
                     Number(t.amount) < 0 ? 'text-negative' : 'text-positive'
                   }`}
                 >
-                  {formatBRL(t.amount)}
+                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: t.currencyCode }).format(Number(t.amount))}
                 </td>
               </tr>
             ))}
@@ -146,7 +149,7 @@ export default function TransactionsPage() {
             Nenhuma transação encontrada.
           </p>
         )}
-      </div>
+      </div>}
 
       {data && data.total > 0 && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -159,7 +162,7 @@ export default function TransactionsPage() {
                 disabled={page <= 1}
                 onClick={() => setPage((p) => p - 1)}
                 aria-label="Página anterior"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-border transition-colors hover:bg-surface-hover disabled:opacity-40"
+                className="flex h-11 w-11 items-center justify-center rounded-md border border-border transition-colors hover:bg-surface-hover disabled:opacity-40"
               >
                 <ChevronLeft className="h-4 w-4" strokeWidth={1.75} />
               </button>
@@ -170,7 +173,7 @@ export default function TransactionsPage() {
                 disabled={page >= totalPages}
                 onClick={() => setPage((p) => p + 1)}
                 aria-label="Próxima página"
-                className="flex h-7 w-7 items-center justify-center rounded-md border border-border transition-colors hover:bg-surface-hover disabled:opacity-40"
+                className="flex h-11 w-11 items-center justify-center rounded-md border border-border transition-colors hover:bg-surface-hover disabled:opacity-40"
               >
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </button>

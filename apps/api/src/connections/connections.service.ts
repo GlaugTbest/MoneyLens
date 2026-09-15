@@ -25,12 +25,21 @@ export class ConnectionsService {
     if (itemId) {
       await this.getOwnedItem(userId, itemId);
     }
-    const connectToken = await this.pluggy.createConnectToken({ itemId });
+    const connectToken = await this.pluggy.createConnectToken({ itemId, clientUserId: userId });
     return { connectToken };
   }
 
   async registerConnection(userId: string, itemId: string) {
+    const existing = await this.prisma.item.findUnique({ where: { id: itemId } });
+    if (existing && (existing.userId !== userId || existing.status === 'DELETED')) {
+      throw new ForbiddenException('Conexão indisponível para este usuário');
+    }
     const remote = await this.pluggy.getItem(itemId);
+    // The marker is injected by our server when issuing the Connect Token.
+    // Legacy sandbox items without a marker must be connected again.
+    if (remote.clientUserId !== userId) {
+      throw new ForbiddenException('Crie uma nova conexão pelo MoneyLens para vincular este banco');
+    }
 
     await this.prisma.item.upsert({
       where: { id: itemId },
@@ -80,14 +89,14 @@ export class ConnectionsService {
 
   async deleteConnection(userId: string, id: string) {
     await this.getOwnedItem(userId, id);
-    await this.pluggy.deleteItem(id).catch(() => undefined);
+    await this.pluggy.deleteItem(id);
     await this.prisma.item.update({ where: { id }, data: { status: 'DELETED' } });
     return { deleted: true };
   }
 
   private async getOwnedItem(userId: string, id: string) {
     const item = await this.prisma.item.findUnique({ where: { id } });
-    if (!item) throw new NotFoundException('Conexão não encontrada');
+    if (!item || item.status === 'DELETED') throw new NotFoundException('Conexão não encontrada');
     if (item.userId !== userId) throw new ForbiddenException();
     return item;
   }

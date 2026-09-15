@@ -14,7 +14,7 @@ export class ApiError extends Error {
 
 const HTTP_NO_CONTENT = 204;
 const HTTP_UNAUTHORIZED = 401;
-const AUTH_ENDPOINTS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh'];
+const AUTH_ENDPOINTS = ['/api/auth/login', '/api/auth/register', '/api/auth/refresh', '/api/auth/logout'];
 
 // Compartilhada entre chamadas concorrentes para não disparar N refreshes em
 // paralelo quando várias requisições batem 401 ao mesmo tempo (ex.: várias
@@ -28,7 +28,10 @@ async function tryRefresh(): Promise<boolean> {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
     })
-      .then((res) => res.ok)
+      .then((res) => {
+        if (res.status === HTTP_UNAUTHORIZED && typeof window !== 'undefined') window.location.replace('/login');
+        return res.ok;
+      })
       .catch(() => false)
       .finally(() => {
         refreshInFlight = null;
@@ -61,7 +64,8 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    throw new ApiError(res.status, body?.message ?? `Erro ${res.status}`);
+    const message = Array.isArray(body?.message) ? body.message.join('. ') : body?.message;
+    throw new ApiError(res.status, message ?? `Erro ${res.status}`);
   }
 
   if (res.status === HTTP_NO_CONTENT) {
@@ -98,6 +102,7 @@ export interface Transaction {
   description: string;
   merchantName: string | null;
   amount: string;
+  currencyCode: string;
   type: 'DEBIT' | 'CREDIT';
   date: string;
   accountId: string;

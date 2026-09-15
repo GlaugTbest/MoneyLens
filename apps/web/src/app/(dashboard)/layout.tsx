@@ -53,6 +53,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={active ? 'page' : undefined}
                 className={`flex items-center gap-2.5 rounded-md px-3 py-2 text-[13.5px] font-medium transition-colors ${
                   active
                     ? 'bg-sidebar-active text-sidebar-foreground'
@@ -76,14 +77,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      <div className="flex flex-1 flex-col pb-16 md:pb-0">
+      <div className="flex min-w-0 flex-1 flex-col pb-24 md:pb-0">
         <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-8 sm:py-10">
+          <p className="mb-5 text-sm text-muted-foreground">MVP de estudo · Sandbox Pluggy · Use apenas contas de teste</p>
           {children}
         </main>
       </div>
 
       {/* Mobile bottom tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-sidebar-border bg-sidebar text-sidebar-foreground md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-10 flex pb-[env(safe-area-inset-bottom)] border-t border-sidebar-border bg-sidebar text-sidebar-foreground md:hidden">
         {NAV_ITEMS.map((item) => {
           const active = pathname === item.href;
           const Icon = item.icon;
@@ -91,6 +93,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Link
               key={item.href}
               href={item.href}
+                aria-current={active ? 'page' : undefined}
               className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors ${
                 active ? 'text-sidebar-foreground' : 'text-sidebar-muted'
               }`}

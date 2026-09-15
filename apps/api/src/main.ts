@@ -25,6 +25,7 @@ async function bootstrap() {
       contentSecurityPolicy: { directives: { defaultSrc: ["'none'"] } },
     }),
   );
+  app.enableShutdownHooks();
   app.use(cookieParser());
   app.enableCors({ origin: config.corsOrigin, credentials: true });
   app.useGlobalPipes(

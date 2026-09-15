@@ -61,10 +61,9 @@ export class PluggyService implements OnApplicationBootstrap {
     return { 'X-API-KEY': apiKey };
   }
 
-  async createConnectToken(options: { itemId?: string } = {}): Promise<string> {
-    const body: Record<string, unknown> = {};
+  async createConnectToken(options: { itemId?: string; clientUserId: string }): Promise<string> {
+    const body: Record<string, unknown> = { options: { clientUserId: options.clientUserId } };
     if (options.itemId) body.itemId = options.itemId;
-    if (this.config.pluggyWebhookUrl) body.webhookUrl = this.config.pluggyWebhookUrl;
 
     const { data } = await firstValueFrom(
       this.http.post<{ accessToken: string }>(
@@ -90,7 +89,9 @@ export class PluggyService implements OnApplicationBootstrap {
       this.http.delete(`${this.config.pluggyBaseUrl}/items/${itemId}`, {
         headers: await this.headers(),
       }),
-    );
+    ).catch((err: AxiosError) => {
+      if (err.response?.status !== 404) throw err;
+    });
   }
 
   async listAccounts(itemId: string): Promise<PluggyAccountsResponse> {

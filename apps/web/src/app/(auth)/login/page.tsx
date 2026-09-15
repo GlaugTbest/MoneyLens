@@ -44,6 +44,7 @@ export default function LoginPage() {
         <input
           id="email"
           type="email"
+          autoComplete="email"
           required
           autoFocus
           value={email}
@@ -59,6 +60,8 @@ export default function LoginPage() {
         <input
           id="password"
           type="password"
+          autoComplete="current-password"
+          maxLength={72}
           required
           minLength={8}
           value={password}
@@ -67,7 +70,7 @@ export default function LoginPage() {
         />
       </div>
 
-      {error && <p className="text-sm text-negative">{error}</p>}
+      {error && <p role="alert" className="text-sm text-negative">{error}</p>}
 
       <button
         type="submit"

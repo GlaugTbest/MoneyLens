@@ -192,6 +192,7 @@ model RecurringExpenseGroup {
 }
 
 model WebhookEvent {
+  externalEventId String? @unique
   id             String    @id @default(cuid())
   itemId         String?
   item           Item?     @relation(fields: [itemId], references: [id])

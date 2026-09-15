@@ -29,13 +29,24 @@ export class InsightsService {
         WHERE i."userId" = ${userId}
           AND t."deletedAt" IS NULL
           AND t.amount < 0
+        AND t."currencyCode" = 'BRL'
+        AND i.status <> 'DELETED'
           ${from ? Prisma.sql`AND t.date >= ${from}` : Prisma.empty}
           ${to ? Prisma.sql`AND t.date <= ${to}` : Prisma.empty}
         GROUP BY period
         ORDER BY period ASC
       `,
     );
-    return rows.map((r) => ({ period: r.period, totalSpent: Number(r.total) }));
+    const points = rows.map((r) => ({ period: r.period, totalSpent: Number(r.total) }));
+    if (groupBy !== 'month' || !from || !to) return points;
+    const byMonth = new Map(points.map((point) => [point.period.toISOString().slice(0, 7), point.totalSpent]));
+    const filled = [];
+    const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+    while (cursor <= to) {
+      filled.push({ period: new Date(cursor), totalSpent: byMonth.get(cursor.toISOString().slice(0, 7)) ?? 0 });
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+    return filled;
   }
 
   async getTopCategories(userId: string, from?: Date, to?: Date) {
@@ -44,7 +55,8 @@ export class InsightsService {
       where: {
         deletedAt: null,
         amount: { lt: 0 },
-        account: { item: { userId } },
+        currencyCode: 'BRL',
+        account: { item: { userId, status: { not: 'DELETED' } } },
         ...(from || to
           ? { date: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }
           : {}),
@@ -86,16 +98,17 @@ export class InsightsService {
 
   getRecurring(userId: string) {
     return this.prisma.recurringExpenseGroup.findMany({
-      where: { userId, status: 'ACTIVE' },
+      where: { userId, status: 'ACTIVE', transactions: { some: { deletedAt: null, account: { item: { status: { not: 'DELETED' } } } } } },
       orderBy: { averageAmount: 'desc' },
       include: { category: true },
     });
   }
 
   async getAnomalies(userId: string, monthDate: Date = new Date()) {
-    const currentMonthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+    const currentMonthStart = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth(), 1));
     const historyStart = new Date(currentMonthStart);
-    historyStart.setMonth(historyStart.getMonth() - ANOMALY_HISTORY_MONTHS);
+    historyStart.setUTCMonth(historyStart.getUTCMonth() - ANOMALY_HISTORY_MONTHS);
+    const nextMonthStart = new Date(Date.UTC(monthDate.getUTCFullYear(), monthDate.getUTCMonth() + 1, 1));
 
     const rows = await this.prisma.$queryRaw<
       Array<{ categoryId: string | null; period: Date; total: string }>
@@ -107,7 +120,10 @@ export class InsightsService {
       WHERE i."userId" = ${userId}
         AND t."deletedAt" IS NULL
         AND t.amount < 0
+        AND t."currencyCode" = 'BRL'
+        AND i.status <> 'DELETED'
         AND t.date >= ${historyStart}
+        AND t.date < ${nextMonthStart}
         AND t."categoryId" IS NOT NULL
       GROUP BY t."categoryId", period
     `);
@@ -136,7 +152,7 @@ export class InsightsService {
       const currentPoint = points.find(
         (p) => p.period.getTime() === currentMonthStart.getTime(),
       );
-      const history = points.filter((p) => p.period.getTime() !== currentMonthStart.getTime());
+      const history = points.filter((p) => p.period.getTime() < currentMonthStart.getTime());
       if (!currentPoint || history.length < 3) continue;
 
       const mean = history.reduce((a, p) => a + p.total, 0) / history.length;
@@ -166,9 +182,11 @@ export class InsightsService {
   // do frontend e reaproveita o cálculo de top-categorias para a
   // concentração em vez de rodar a mesma agregação duas vezes.
   async getFullReport(userId: string) {
+    const now = new Date();
+    const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
     const [evolution, topCategories, recurring, anomalies] = await Promise.all([
-      this.getSpendEvolution(userId, 'month'),
-      this.getTopCategories(userId),
+      this.getSpendEvolution(userId, 'month', from, now),
+      this.getTopCategories(userId, from, now),
       this.getRecurring(userId),
       this.getAnomalies(userId),
     ]);
@@ -192,11 +210,11 @@ export class InsightsService {
 
   async getSummary(userId: string) {
     const now = new Date();
-    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const sixMonthsAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
 
     const [evolution, topCategories, recurring, anomalies] = await Promise.all([
-      this.getSpendEvolution(userId, 'month', sixMonthsAgo),
-      this.getTopCategories(userId, sixMonthsAgo),
+      this.getSpendEvolution(userId, 'month', sixMonthsAgo, now),
+      this.getTopCategories(userId, sixMonthsAgo, now),
       this.getRecurring(userId),
       this.getAnomalies(userId, now),
     ]);
@@ -205,7 +223,7 @@ export class InsightsService {
       spendEvolution: evolution,
       topCategories: topCategories.slice(0, 5),
       recurringCount: recurring.length,
-      recurringMonthlyTotal: recurring.reduce((a, r) => a + Number(r.averageAmount), 0),
+      recurringMonthlyTotal: recurring.reduce((a, r) => a + Number(r.averageAmount) * 30 / Math.max(1, r.intervalDays), 0),
       anomalies,
     };
   }
@@ -220,8 +238,9 @@ export class InsightsService {
       where: {
         deletedAt: null,
         amount: { lt: 0 },
+        currencyCode: 'BRL',
         date: { gte: lookback },
-        account: { item: { userId } },
+        account: { item: { userId, status: { not: 'DELETED' } } },
         normalizedMerchant: { not: null },
       },
       select: { id: true, normalizedMerchant: true, amount: true, date: true, categoryId: true },
@@ -237,6 +256,7 @@ export class InsightsService {
     }
 
     let detected = 0;
+    const confirmed: string[] = [];
 
     for (const [merchant, txs] of byMerchant) {
       if (txs.length < MIN_RECURRING_OCCURRENCES) continue;
@@ -298,8 +318,14 @@ export class InsightsService {
         data: { recurringGroupId: group.id },
       });
 
+      confirmed.push(group.id);
       detected += 1;
     }
+
+    await this.prisma.recurringExpenseGroup.updateMany({
+      where: { userId, id: { notIn: confirmed }, status: 'ACTIVE' },
+      data: { status: 'ENDED', lastComputedAt: new Date() },
+    });
 
     this.logger.log(`Recorrência detectada para ${detected} merchant(s) do usuário ${userId}`);
   }
