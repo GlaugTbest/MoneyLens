@@ -12,6 +12,7 @@ build/
 npm-debug.log*
 tmp/
 output/
+assets/
 *.pdf
 AGENTS.md
 CLAUDE.md
