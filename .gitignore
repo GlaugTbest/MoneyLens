@@ -10,6 +10,11 @@ build/
 
 *.log
 npm-debug.log*
+tmp/
+output/
+*.pdf
+AGENTS.md
+CLAUDE.md
 
 .DS_Store
 Thumbs.db
